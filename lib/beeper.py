@@ -193,7 +193,7 @@ def unread_chats(token: str, cap: int = FETCH_CAP, budget: float = 0.0) -> tuple
     seen: set[str] = set()
     cursor = ""
     truncated = False
-    deadline = (_now() + budget) if budget > 0 else 0.0
+    deadline = (time.monotonic() + budget) if budget > 0 else 0.0
     while True:
         params = {
             "unreadOnly": True,
@@ -225,7 +225,7 @@ def unread_chats(token: str, cap: int = FETCH_CAP, budget: float = 0.0) -> tuple
         cursor = str(data.get("oldestCursor") or "")
         if not data.get("hasMore") or not cursor or not items:
             break
-        if deadline and _now() >= deadline:
+        if deadline and time.monotonic() >= deadline:
             truncated = True
             break
     out.sort(key=lambda chat: (_ts(chat.get("lastActivity")), str(chat.get("id"))), reverse=True)
@@ -320,7 +320,3 @@ def _ts(value: object) -> float:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.timestamp()
-
-
-def _now() -> float:
-    return time.monotonic()
