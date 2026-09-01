@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Contract tests
+        run: python3 -m unittest discover -s tests -t tests -v
+
+      - name: Compile Python
+        run: python3 -m compileall -q lib tests
+
+      - name: Manifest JSON
+        run: python3 -c "import json,sys; json.load(open('manifest.json')); print('ok')"
+
+      - name: Shell syntax
+        run: bash -n bin/omarchy-beeper
+
+      - name: ShellCheck
+        uses: ludeeus/action-shellcheck@2.0.0
+        env:
+          SHELLCHECK_OPTS: -x
+        with:
+          scandir: '.'
+          ignore_paths: tests
+          version: v0.10.0

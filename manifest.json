@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "id": "prdlk.beeper",
+  "name": "Beeper",
+  "version": "1.0.0",
+  "author": "prdlk",
+  "description": "Unread chats from every Beeper network in the bar. Click a row to open that chat in Beeper Desktop and mark it read.",
+  "homepage": "https://github.com/prdlk/omarchy-beeper",
+  "license": "MIT",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Beeper",
+    "description": "One pile of unread conversations across WhatsApp, Signal, Slack, Telegram, and every other network Beeper bridges. Read and mark-read only.",
+    "category": "Apps",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "max": 25,
+      "refreshIntervalSec": 60
+    },
+    "schema": [
+      {
+        "key": "max",
+        "type": "integer",
+        "label": "Page size",
+        "min": 1,
+        "max": 50,
+        "step": 1,
+        "defaultValue": 25
+      },
+      {
+        "key": "refreshIntervalSec",
+        "type": "integer",
+        "label": "Refresh interval (seconds)",
+        "min": 15,
+        "max": 3600,
+        "step": 15,
+        "defaultValue": 60
+      }
+    ]
+  }
+}

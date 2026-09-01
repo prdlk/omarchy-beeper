@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# omarchy-beeper - data source for the Omarchy bar widget.
+#
+# The panel calls:
+#   omarchy-beeper list [--limit N] [--page OFFSET]
+#   omarchy-beeper read <id>
+#   omarchy-beeper read-all
+#   omarchy-beeper open [<id>]
+#
+# The token is set up once in a terminal:
+#   omarchy-beeper auth
+#
+# list/read/read-all/open always print one JSON object. Failures print
+# {"ok":false,...} and exit 0 so the widget never crashes on empty stdout.
+
+set -uo pipefail
+umask 077
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+export OMARCHY_BEEPER_ROOT="$ROOT"
+
+# The bar is not a login shell, so PATH may miss user-managed runtimes.
+for candidate in "$HOME/.local/share/mise/shims" "$HOME/.local/bin"; do
+  case ":$PATH:" in
+    *":$candidate:"*) ;;
+    *) [ -d "$candidate" ] && PATH="$PATH:$candidate" ;;
+  esac
+done
+export PATH
+
+if ! command -v python3 >/dev/null 2>&1; then
+  printf '{"ok":false,"error":"python3 is required"}\n'
+  exit 0
+fi
+
+exec python3 "$ROOT/lib/cli.py" "$@"
