@@ -17,14 +17,15 @@ its settings.
 
 In Beeper Desktop: **Settings → Integrations → create an access token.**
 
-Read access is all this plugin needs. It calls exactly six endpoints:
+Read access is all this plugin needs. It calls exactly seven endpoints:
 
 | Call | Why |
 | --- | --- |
 | `GET /v1/info` | Tell "Beeper is down" apart from "the token is wrong" |
 | `GET /v1/accounts` | Network names for the chips, and the account count |
-| `GET /v1/chats/search` | The unread pile |
-| `GET /v1/chats/{chatID}/messages` | The last message, for the row snippet |
+| `GET /v1/chats/search` | The unread pile (`unreadOnly=true`) |
+| `GET /v1/messages/search` | The last message of a visible row, for the snippet |
+| `GET /v1/chats/{chatID}/messages` | Snippet fallback for a chat the index has not reached |
 | `POST /v1/chats/{chatID}/read` | Mark a chat read |
 | `POST /v1/focus` | Bring Beeper Desktop forward on a chat |
 

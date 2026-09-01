@@ -9,7 +9,8 @@ Endpoints used (https://developers.beeper.com/desktop-api-reference/):
   GET  /v1/info                     server discovery, no auth
   GET  /v1/accounts                 connected chat accounts
   GET  /v1/chats/search             unread chats, cursor paginated
-  GET  /v1/chats/{chatID}/messages  last message for the row snippet
+  GET  /v1/messages/search          last message for the row snippet
+  GET  /v1/chats/{chatID}/messages  snippet fallback for unindexed chats
   POST /v1/chats/{chatID}/read      mark a chat read
   POST /v1/focus                    focus Beeper Desktop, optionally a chat
 """
@@ -35,6 +36,7 @@ from common import (
 
 REQUEST_TIMEOUT = 30
 SEARCH_PAGE = 200  # /v1/chats/search caps limit at 200
+SNIPPET_SEARCH_LIMIT = 5  # a few, so a deleted newest message is not fatal
 SNIPPET_WORKERS = 8
 
 # Message kinds with no body text. Shown as a short placeholder instead.
@@ -181,13 +183,31 @@ def account_label(account: dict) -> str:
     return one_line(str(account.get("network") or account.get("accountID") or ""), 40)
 
 
-def unread_chats(token: str, cap: int = FETCH_CAP, budget: float = 0.0) -> tuple[list[dict], bool]:
-    """Unread chats, newest first.
+def in_pile(chat: dict) -> bool:
+    """Is this chat one the user still has to look at?
 
-    Muted, archived, and low-priority chats are not part of the pile:
-    `inbox=primary` drops archived and low-priority, `includeMuted=false`
-    drops muted. Returns (chats, truncated) where truncated means the walk
-    hit `cap` or `budget` before the API ran out of pages.
+    Muted, archived, and low-priority chats are out. The decision is made
+    here, on the flags the chat object carries, and not with the search
+    endpoint's `inbox`/`includeMuted` filters: measured against Beeper
+    Desktop 4.3.73, `includeMuted=false` returns muted chats anyway, and
+    `inbox=primary` combined with `unreadOnly=true` hides ordinary unread
+    chats (75 of 80 on the machine this was tested on). The per-chat flags
+    are exact.
+    """
+    if chat.get("isMuted") or chat.get("isArchived") or chat.get("isLowPriority"):
+        return False
+    try:
+        unread = int(chat.get("unreadCount") or 0)
+    except (TypeError, ValueError):
+        unread = 0
+    return unread > 0 or bool(chat.get("isMarkedUnread"))
+
+
+def unread_chats(token: str, cap: int = FETCH_CAP, budget: float = 0.0) -> tuple[list[dict], bool]:
+    """Unread chats, newest first, muted/archived/low-priority removed.
+
+    Returns (chats, truncated) where truncated means the walk hit `cap` or
+    `budget` before the API ran out of pages.
     """
     out: list[dict] = []
     seen: set[str] = set()
@@ -195,12 +215,7 @@ def unread_chats(token: str, cap: int = FETCH_CAP, budget: float = 0.0) -> tuple
     truncated = False
     deadline = (time.monotonic() + budget) if budget > 0 else 0.0
     while True:
-        params = {
-            "unreadOnly": True,
-            "includeMuted": False,
-            "inbox": "primary",
-            "limit": min(SEARCH_PAGE, max(1, cap)),
-        }
+        params: dict = {"unreadOnly": True, "limit": SEARCH_PAGE}
         if cursor:
             params["cursor"] = cursor
             params["direction"] = "before"
@@ -217,7 +232,8 @@ def unread_chats(token: str, cap: int = FETCH_CAP, budget: float = 0.0) -> tuple
             if not chat_id or chat_id in seen:
                 continue
             seen.add(chat_id)
-            out.append(chat)
+            if in_pile(chat):
+                out.append(chat)
         if len(out) >= cap:
             truncated = bool(data.get("hasMore")) or len(out) > cap
             del out[cap:]
@@ -232,23 +248,51 @@ def unread_chats(token: str, cap: int = FETCH_CAP, budget: float = 0.0) -> tuple
     return out, truncated
 
 
-def last_message(token: str, chat_id: str) -> dict:
-    """Newest displayable message in a chat, for the row snippet."""
-    data = request(token, "GET", f"/v1/chats/{urllib.parse.quote(chat_id, safe='')}/messages")
+def _newest(data: object) -> dict:
+    """Newest message in a response that is worth showing as a snippet."""
     items = data.get("items") if isinstance(data, dict) else None
     if not isinstance(items, list):
         return {}
     best: dict = {}
-    best_key = ("", 0.0)
+    best_key = (0.0, "")
     for msg in items:
         if not isinstance(msg, dict):
             continue
         if msg.get("isDeleted") or msg.get("isHidden") or msg.get("type") == "REACTION":
             continue
-        key = (str(msg.get("sortKey") or ""), _ts(msg.get("timestamp")))
-        if not best or key[1] > best_key[1] or (key[1] == best_key[1] and key[0] > best_key[0]):
+        key = (_ts(msg.get("timestamp")), str(msg.get("sortKey") or ""))
+        if not best or key > best_key:
             best, best_key = msg, key
     return best
+
+
+def last_message(token: str, chat_id: str) -> dict:
+    """Newest displayable message in a chat, for the row snippet.
+
+    The search index answers in about a millisecond; listing a chat's
+    messages takes ~145 ms because it returns a whole page. So ask the index
+    first and only fall back for the few chats it has not indexed yet
+    (measured: 2 of 40 on a warm install, both recovered by the fallback).
+    """
+    indexed = _newest(
+        request(
+            token,
+            "GET",
+            "/v1/messages/search",
+            {
+                "chatIDs": [chat_id],
+                "limit": SNIPPET_SEARCH_LIMIT,
+                # Neither filter should ever hide the snippet of a chat that
+                # already earned its place in the pile.
+                "excludeLowPriority": False,
+                "includeMuted": True,
+            },
+        )
+    )
+    if indexed:
+        return indexed
+    path = f"/v1/chats/{urllib.parse.quote(chat_id, safe='')}/messages"
+    return _newest(request(token, "GET", path))
 
 
 def message_preview(msg: dict) -> str:

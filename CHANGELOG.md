@@ -16,7 +16,13 @@ First release.
 - Paging with `n`/`p`, page size 1–50, poll interval 15–3600 s.
 - `bin/omarchy-beeper` CLI: `list`, `read`, `read-all`, `open`, `auth`. Every
   command prints one JSON object and exits 0.
-- Muted, archived, and low-priority chats are excluded from the pile.
+- Muted, archived, and low-priority chats are excluded from the pile, filtered
+  on each chat's own flags: Beeper Desktop 4.3.73 ignores `includeMuted=false`
+  and `inbox=primary` hides genuinely unread chats when combined with
+  `unreadOnly=true`.
+- Row snippets come from `GET /v1/messages/search` (~1 ms per chat) with
+  `GET /v1/chats/{chatID}/messages` as the fallback for chats the message
+  index has not reached yet, and only for the rows on screen.
 - Token stored at `~/.config/omarchy-beeper/secrets/token.json` (600, in a 700
   directory), read with `O_NOFOLLOW`, never passed in argv.
 - All HTTP bound to `http://localhost:23373/v1/`, no redirects, 2 MiB body cap

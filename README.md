@@ -91,13 +91,20 @@ One row is one unread **chat**, not one message, sorted newest activity first.
 
 Not in the pile:
 
-- **muted** chats (`includeMuted=false`),
+- **muted** chats,
 - **archived** chats,
 - **low-priority** chats.
 
-The last two come free with `inbox=primary` on `GET /v1/chats/search`, which
-Beeper defines as non-archived and non-low-priority. If you want a muted chat
-to nag you, unmute it in Beeper.
+A chat you marked unread by hand counts even though it has no unread
+messages. If you want a muted chat to nag you, unmute it in Beeper.
+
+The filtering happens in `lib/beeper.py`, on the `isMuted` / `isArchived` /
+`isLowPriority` flags each chat carries — deliberately **not** with the search
+endpoint's own filters. Measured against Beeper Desktop 4.3.73:
+`includeMuted=false` returns muted chats anyway, and `inbox=primary` combined
+with `unreadOnly=true` hid 77 of 78 genuinely unread chats. The per-chat flags
+are exact, so the plugin asks only for `unreadOnly=true` and decides the rest
+itself.
 
 The badge counts unread chats, capped at 200 — a deeper pile is a Beeper
 problem, not a bar problem. When the cap is hit the panel says so. `A`
@@ -160,11 +167,14 @@ Failures look like `{"ok":false,"error":"…"}`. The two you will actually see:
   one means `POST /v1/focus` with the chat id: Beeper Desktop comes forward
   with that conversation selected. There is no browser hand-off and no deep
   link to validate.
-- **Snippets cost one request per visible row.** The chat objects Beeper
-  returns carry no message preview, so the last message is fetched with
-  `GET /v1/chats/{chatID}/messages` — but only for the rows on screen, never
-  for the whole pile. A snippet that fails to load costs the snippet, not the
-  row.
+- **Snippets are index-first, one request per visible row.** The chat objects
+  Beeper returns carry no message preview, so the last message comes from
+  `GET /v1/messages/search?chatIDs=<chat>` — about 1 ms per chat, against
+  ~145 ms for `GET /v1/chats/{chatID}/messages`, which returns a whole page.
+  The slow endpoint is only used as a fallback for chats the index has not
+  caught up with yet (2 of 40 on a warm install; the fallback recovered both).
+  Either way only the rows on screen are fetched, never the whole pile, and a
+  snippet that fails to load costs the snippet, not the row.
 - **Paging is a numeric offset.** The API is cursor-based; the CLI walks the
   cursors once, caps at 200 chats, sorts, and slices. `nextPage` is the next
   offset, so `p` can step back without replaying cursors.

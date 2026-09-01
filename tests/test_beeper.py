@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import unittest
+import urllib.parse
 from contextlib import redirect_stderr
 from io import StringIO
 from unittest.mock import patch
@@ -25,31 +26,35 @@ import common
 
 TOKEN = "test-token"
 SEARCH = "/v1/chats/search"
+MSG_SEARCH = "/v1/messages/search"
 ACCOUNTS = "/v1/accounts"
 FOCUS = "/v1/focus"
 
 
 def messages_path(chat_id: str) -> str:
-    import urllib.parse
-
     return f"/v1/chats/{urllib.parse.quote(chat_id, safe='')}/messages"
 
 
 def read_path(chat_id: str) -> str:
-    import urllib.parse
-
     return f"/v1/chats/{urllib.parse.quote(chat_id, safe='')}/read"
 
 
 def wire(http: FakeHttp, chats: list[dict], accounts: list[dict] | None = None) -> FakeHttp:
-    """Standard happy-path routing: one search page, snippets, marks."""
+    """Standard happy-path routing: one search page, snippets, marks.
+
+    Snippets come from the message index, so that is what is wired here; the
+    per-chat fallback is only routed by the tests that exercise it.
+    """
     http.route("GET", SEARCH, lambda call: search_page(chats))
     http.route("GET", ACCOUNTS, accounts if accounts is not None else [account("a1", "WhatsApp")])
     http.route("POST", FOCUS, {"success": True})
+    http.route(
+        "GET",
+        MSG_SEARCH,
+        lambda call: {"items": [message(call.one("chatIDs"))], "hasMore": False},
+    )
     for item in chats:
-        chat_id = item["id"]
-        http.route("GET", messages_path(chat_id), {"items": [message(chat_id)], "hasMore": False})
-        http.route("POST", read_path(chat_id), item)
+        http.route("POST", read_path(item["id"]), item)
     return http
 
 
@@ -81,13 +86,45 @@ class UrlBindingTests(unittest.TestCase):
 
 
 class ListContractTests(unittest.TestCase):
-    def test_filters_out_muted_archived_and_low_priority(self) -> None:
+    def test_asks_the_api_only_for_unread(self) -> None:
         http = wire(FakeHttp(), [chat("!a:x")])
         run_list(http)
         search = next(c for c in http.calls if c.path == SEARCH)
         self.assertEqual(search.one("unreadOnly"), "true")
-        self.assertEqual(search.one("includeMuted"), "false")
-        self.assertEqual(search.one("inbox"), "primary")
+        self.assertEqual(search.one("limit"), str(beeper.SEARCH_PAGE))
+        # Beeper Desktop 4.3.73 ignores includeMuted and mis-filters
+        # inbox=primary together with unreadOnly, so neither is sent: the
+        # pile is filtered here, on the flags each chat carries.
+        self.assertNotIn("includeMuted", search.query)
+        self.assertNotIn("inbox", search.query)
+
+    def test_muted_archived_and_low_priority_are_not_in_the_pile(self) -> None:
+        chats = [
+            chat("!keep:x", title="Keep"),
+            dict(chat("!muted:x", title="Muted"), isMuted=True),
+            dict(chat("!archived:x", title="Archived"), isArchived=True),
+            dict(chat("!low:x", title="Low"), isLowPriority=True),
+            dict(chat("!read:x", title="Read"), unreadCount=0),
+        ]
+        payload = run_list(wire(FakeHttp(), chats))
+        self.assertEqual([row["subject"] for row in payload["messages"]], ["Keep"])
+        self.assertEqual(payload["unread"], 1)
+        self.assertEqual(sum(box["unread"] for box in payload["inboxes"]), 1)
+
+    def test_a_chat_marked_unread_by_hand_stays_in_the_pile(self) -> None:
+        marked = dict(chat("!marked:x", title="Marked"), unreadCount=0, isMarkedUnread=True)
+        payload = run_list(wire(FakeHttp(), [marked]))
+        self.assertEqual([row["subject"] for row in payload["messages"]], ["Marked"])
+        self.assertEqual(payload["unread"], 1)
+
+    def test_in_pile_is_the_single_rule(self) -> None:
+        self.assertTrue(beeper.in_pile(chat("!a:x")))
+        self.assertFalse(beeper.in_pile(dict(chat("!a:x"), isMuted=True)))
+        self.assertFalse(beeper.in_pile(dict(chat("!a:x"), isArchived=True)))
+        self.assertFalse(beeper.in_pile(dict(chat("!a:x"), isLowPriority=True)))
+        self.assertFalse(beeper.in_pile(dict(chat("!a:x"), unreadCount=0)))
+        self.assertFalse(beeper.in_pile(dict(chat("!a:x"), unreadCount="nonsense")))
+        self.assertTrue(beeper.in_pile(dict(chat("!a:x"), unreadCount=0, isMarkedUnread=True)))
 
     def test_one_row_per_chat_newest_first(self) -> None:
         chats = [
@@ -146,16 +183,39 @@ class ListContractTests(unittest.TestCase):
         chats = [chat(f"!c{i}:x", last_activity=f"2026-02-11T10:{i:02d}:00Z") for i in range(40)]
         http = wire(FakeHttp(), chats)
         run_list(http, limit=5)
-        message_calls = [p for p in http.paths("GET") if p.endswith("/messages")]
-        self.assertEqual(len(message_calls), 5)
+        self.assertEqual(len([p for p in http.paths("GET") if p == MSG_SEARCH]), 5)
+        self.assertEqual([p for p in http.paths("GET") if p.endswith("/messages")], [])
+
+    def test_snippet_search_is_scoped_and_unfiltered(self) -> None:
+        http = wire(FakeHttp(), [chat("!a:x")])
+        run_list(http)
+        call = next(c for c in http.calls if c.path == MSG_SEARCH)
+        self.assertEqual(call.query["chatIDs"], ["!a:x"])
+        self.assertEqual(call.one("limit"), str(beeper.SNIPPET_SEARCH_LIMIT))
+        # A chat already in the pile must never lose its snippet to an
+        # unrelated filter on the message index.
+        self.assertEqual(call.one("excludeLowPriority"), "false")
+        self.assertEqual(call.one("includeMuted"), "true")
+
+    def test_unindexed_chat_falls_back_to_listing_its_messages(self) -> None:
+        http = wire(FakeHttp(), [chat("!a:x")])
+        http.route("GET", MSG_SEARCH, {"items": [], "hasMore": False})
+        http.route(
+            "GET",
+            messages_path("!a:x"),
+            {"items": [message("!a:x", text="from the chat itself")], "hasMore": False},
+        )
+        payload = run_list(http)
+        self.assertEqual(payload["messages"][0]["snippet"], "from the chat itself")
+        self.assertIn(messages_path("!a:x"), http.paths("GET"))
 
     def test_a_failed_snippet_only_loses_the_snippet(self) -> None:
-        chats = [chat("!a:x")]
-        http = wire(FakeHttp(), chats)
-        http.route("GET", messages_path("!a:x"), lambda call: http_error(500, "boom"))
+        http = wire(FakeHttp(), [chat("!a:x")])
+        http.route("GET", MSG_SEARCH, lambda call: http_error(500, "boom"))
         payload = run_list(http)
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["messages"][0]["snippet"], "")
+        self.assertEqual(payload["messages"][0]["from"], "")
         self.assertEqual(payload["messages"][0]["subject"], "Ada Lovelace")
         self.assertEqual(payload["messages"][0]["ts"], 1770804000)
 
@@ -163,7 +223,7 @@ class ListContractTests(unittest.TestCase):
         http = wire(FakeHttp(), [chat("!a:x")])
         http.route(
             "GET",
-            messages_path("!a:x"),
+            MSG_SEARCH,
             {"items": [message("!a:x", text="", kind="IMAGE")], "hasMore": False},
         )
         payload = run_list(http)
@@ -180,9 +240,17 @@ class ListContractTests(unittest.TestCase):
             ),
             dict(message("!a:x", text="👍", timestamp="2026-02-11T13:00:00Z", sort_key="5"), type="REACTION"),
         ]
-        http.route("GET", messages_path("!a:x"), {"items": items, "hasMore": False})
+        http.route("GET", MSG_SEARCH, {"items": items, "hasMore": False})
         payload = run_list(http)
         self.assertEqual(payload["messages"][0]["snippet"], "newest")
+
+    def test_you_are_named_as_the_sender_of_your_own_last_message(self) -> None:
+        http = wire(FakeHttp(), [chat("!a:x")])
+        mine = dict(message("!a:x", text="on my way", sender="Prad"), isSender=True)
+        http.route("GET", MSG_SEARCH, {"items": [mine], "hasMore": False})
+        payload = run_list(http)
+        self.assertEqual(payload["messages"][0]["from"], "You")
+        self.assertEqual(payload["messages"][0]["snippet"], "on my way")
 
     def test_inboxes_and_account_count_come_from_accounts(self) -> None:
         chats = [
