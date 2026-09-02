@@ -131,7 +131,7 @@ class PanelContractTests(unittest.TestCase):
         self.assertNotIn("Image {", self.icon)
 
     def test_bubble_and_dots_stay_inside_the_canvas(self) -> None:
-        for size in (10, 12, 16, 20, 24, 32, 48):
+        for size in (8, 10, BAR_INK, 12, 16, 20, 24, 32, 48):
             for dpr in (1.0, 1.25, 1.5, 2.0):
                 geom = bubble_geometry(size, dpr)
                 self.assertGreater(geom["bodyH"], 0, msg=f"size={size} dpr={dpr}")
@@ -142,6 +142,20 @@ class PanelContractTests(unittest.TestCase):
                         self.assertGreaterEqual(y, -0.51, msg=f"size={size} dpr={dpr} t={amount}")
                         self.assertLessEqual(x, size + 0.51, msg=f"size={size} dpr={dpr} t={amount}")
                         self.assertLessEqual(y, size + 0.51, msg=f"size={size} dpr={dpr} t={amount}")
+
+    def test_ink_box_matches_the_glyph_ink_beside_it(self) -> None:
+        # The bar draws its other icons as Nerd Font glyphs at
+        # Style.bar.iconFont inside the wider Style.bar.iconCanvas slot, so
+        # their ink is a fraction of the slot: 9.0-11.5 logical px on the
+        # running bar. Sizing the bubble to the canvas made it 15.
+        self.assertIn("property real iconSize: Style.bar.iconFont * 0.85", self.icon)
+        self.assertNotIn("Style.bar.iconCanvas", self.qml)
+        geom = bubble_geometry(BAR_INK, 2.0)
+        ys = [y for _, y in painted_extents(geom, 1.0)]
+        xs = [x for x, _ in painted_extents(geom, 1.0)]
+        self.assertLessEqual(max(ys) - min(ys), 11.0)
+        self.assertLessEqual(max(xs) - min(xs), 11.0)
+        self.assertEqual(geom["stroke"], 1.0, "one device pixel at dpr 2, as the glyphs stroke")
 
     def test_tail_never_runs_into_a_corner_arc(self) -> None:
         for size in (10, 16, 24, 48):
@@ -180,6 +194,11 @@ class PanelContractTests(unittest.TestCase):
         self.assertIn(f"## {self.manifest['version']}", changelog)
 
 
+# What BeeperIcon's default resolves to in the bar: Style.bar.iconFont is 13
+# and the bubble is sized to the 0.85 em that puts it on the glyphs' median.
+BAR_INK = 13 * 0.85
+
+
 def _snap(value: float, dpr: float) -> float:
     return round(value * dpr) / dpr
 
@@ -190,7 +209,7 @@ def _snap_stroke(value: float, dpr: float) -> float:
 
 def bubble_geometry(icon_size: float, dpr: float = 1.0) -> dict[str, float]:
     """Mirror of BeeperIcon.qml so the geometry can be checked without a GPU."""
-    stroke = _snap_stroke(max(1.5, icon_size * 0.11), dpr)
+    stroke = _snap_stroke(icon_size * 0.11, dpr)
     pad = _snap(max(stroke / 2, 0.5), dpr)
     tail_h = _snap(max(stroke * 1.2, icon_size * 0.16), dpr)
     body_x = _snap(pad, dpr)
