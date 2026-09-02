@@ -5,11 +5,20 @@ import qs.Commons
 // Chat bubble: rounded outline with a tail, and three dots that fade in when
 // something is unread. Stroke, not a filled blob, so the silhouette keeps
 // contrast on a transparent bar over light, dark, or mixed wallpapers.
-// Every painted extent stays inside the optical canvas at every dot pose.
+// Every painted extent stays inside `iconSize` at every dot pose.
+//
+// `iconSize` is the *ink* box, not the bar's icon slot. Neighbouring bar
+// icons are Nerd Font glyphs drawn at Style.bar.iconFont inside the wider
+// Style.bar.iconCanvas slot, so their ink is a fraction of the slot, never
+// the whole of it. Measured off the running bar (VictorMono Nerd Font,
+// iconFont 13, scale 2): those glyphs ink 9.0-11.5 logical px, median 10,
+// with a 1 logical px stroke. 0.85 em lands the bubble on that median;
+// painting edge to edge on the 16 px canvas made it 15 px with a 2 px
+// stroke, half again as large as everything beside it.
 Item {
   id: root
 
-  property real iconSize: Style.bar.iconCanvas
+  property real iconSize: Style.bar.iconFont * 0.85
   property color color: Color.foreground
   property color dotColor: color
   property bool hasMail: false
@@ -32,7 +41,9 @@ Item {
     return Math.max(1, Math.round(v * root.dpr)) / root.dpr
   }
 
-  readonly property real stroke: snapStroke(Math.max(1.5, iconSize * 0.11))
+  // snapStroke already floors the stroke at one device pixel, which is what
+  // the glyphs beside it use; a logical-pixel floor would double it on HiDPI.
+  readonly property real stroke: snapStroke(iconSize * 0.11)
   readonly property real pad: snap(Math.max(stroke / 2, 0.5))
 
   readonly property real tailH: snap(Math.max(stroke * 1.2, iconSize * 0.16))

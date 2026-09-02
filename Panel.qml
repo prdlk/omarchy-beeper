@@ -390,7 +390,6 @@ Panel {
 
           BeeperIcon {
             anchors.verticalCenter: parent.verticalCenter
-            iconSize: Style.bar.iconCanvas
             color: button.foreground
             dotColor: button.foreground
             hasMail: root.hasUnread && root.reachable
