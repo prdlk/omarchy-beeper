@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.1
+
+- Bar icon: size the bubble to the ink box the neighbouring Nerd Font glyphs
+  actually cover (0.85 em of `Style.bar.iconFont`) instead of filling the
+  `Style.bar.iconCanvas` slot, and let the stroke floor at one device pixel
+  rather than 1.5 logical px. On the running bar the bubble was 15 logical px
+  with a 2 px stroke next to glyphs inking 9.0–11.5 px with a 1 px stroke; it
+  is now 10 px, on their median.
+
 ## 1.0.0
 
 First release.
