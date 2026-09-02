@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "prdlk.beeper",
   "name": "Beeper",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "prdlk",
   "description": "Unread chats from every Beeper network in the bar. Click a row to open that chat in Beeper Desktop and mark it read.",
   "homepage": "https://github.com/prdlk/omarchy-beeper",
